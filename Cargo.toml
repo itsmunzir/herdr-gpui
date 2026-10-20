@@ -1,5 +1,7 @@
 [workspace]
 members  = ["crates/embed-resource", "crates/herdr-client", "crates/herdr-gpui", "crates/herdr-gpui-launcher", "crates/herdr-protocol"]
+# Vendored third-party crates keep their upstream layout and lint baseline.
+exclude  = ["vendor/gpui-pre-linux"]
 resolver = "2"
 
 [workspace.package]
@@ -138,3 +140,6 @@ zeroize              = "=1.9.1"
 # no-op stands in for it. See crates/embed-resource.
 [patch.crates-io]
 embed-resource = { path = "crates/embed-resource" }
+# Unmodified gpui-pre-linux 0.3.6 (zed@bcf6582), vendored so Linux platform
+# fixes can ship before a gpui-pre release carries them. See vendor/README.md.
+gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
