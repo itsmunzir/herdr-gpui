@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fail when a tracked source file (Rust, Python, shell, Swift) exceeds MAX_LINES.
 # There is no allowlist: split an oversized file by responsibility instead.
+# Third-party crates under vendor/ keep their upstream layout and are skipped.
 
 set -euo pipefail
 
@@ -17,7 +18,7 @@ while IFS= read -r -d '' file; do
     echo "FAIL: $file has $lines lines (limit $MAX_LINES)"
     failures=$((failures + 1))
   fi
-done < <(git ls-files -z -- '*.rs' '*.py' '*.sh' '*.swift')
+done < <(git ls-files -z -- '*.rs' '*.py' '*.sh' '*.swift' ':(exclude)vendor/**')
 
 if ((failures > 0)); then
   echo
