@@ -27,6 +27,7 @@ use wayland_protocols::{
     wp::fractional_scale::v1::client::wp_fractional_scale_v1,
     xdg::dialog::v1::client::xdg_dialog_v1::XdgDialogV1,
 };
+use wayland_protocols::ext::background_effect::v1::client::ext_background_effect_surface_v1;
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 use wayland_protocols_wlr::layer_shell::v1::client::zwlr_layer_surface_v1;
 
@@ -106,6 +107,7 @@ pub struct WaylandWindowState {
     app_id: Option<String>,
     appearance: WindowAppearance,
     blur: Option<org_kde_kwin_blur::OrgKdeKwinBlur>,
+    background_effect: Option<ext_background_effect_surface_v1::ExtBackgroundEffectSurfaceV1>,
     viewport: Option<wp_viewport::WpViewport>,
     outputs: HashMap<ObjectId, Output>,
     display: Option<(ObjectId, Output)>,
@@ -605,6 +607,7 @@ impl WaylandWindowState {
             surface,
             app_id: options.app_id,
             blur: None,
+            background_effect: None,
             viewport,
             globals,
             outputs: HashMap::default(),
@@ -772,6 +775,9 @@ impl Drop for WaylandWindow {
         // Destroy blur first, this has no dependencies.
         if let Some(blur) = &state.blur {
             blur.release();
+        }
+        if let Some(effect) = &state.background_effect {
+            effect.destroy();
         }
 
         // Decorations must be destroyed before the xdg state.
@@ -2235,7 +2241,26 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         state.surface.set_opaque_region(None);
     }
 
-    if let Some(ref blur_manager) = state.globals.blur_manager {
+    // Prefer the standard ext-background-effect protocol; KWin 6.8 and later
+    // no longer advertise org_kde_kwin_blur_manager.
+    if let Some(effect_manager) = state.globals.background_effect_manager.clone() {
+        if state.background_appearance == WindowBackgroundAppearance::Blurred {
+            if state.background_effect.is_none() {
+                let effect =
+                    effect_manager.get_background_effect(&state.surface, &state.globals.qh, ());
+                state.background_effect = Some(effect);
+            }
+            // Unlike org_kde_kwin_blur, whose default covers the whole surface,
+            // the blur region starts empty, so the window area is set explicitly.
+            // It is double-buffered and applies with the next surface commit.
+            if let Some(effect) = &state.background_effect {
+                effect.set_blur_region(Some(&region));
+            }
+        } else if let Some(effect) = state.background_effect.take() {
+            // Destroying the object removes its blur region on the next commit.
+            effect.destroy();
+        }
+    } else if let Some(ref blur_manager) = state.globals.blur_manager {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.blur.is_none() {
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
