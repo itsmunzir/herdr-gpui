@@ -52,10 +52,17 @@ pub fn config_path(
 }
 
 /// The instances glab's config on this machine lists, or none when it has
-/// no readable one. Reads a file: call it from a worker.
+/// no readable one. The variables come from the login shell, as they do for
+/// the `glab` that `cli_token` runs, so a launch from Finder or a
+/// desktop entry finds the same file. Reads a file and may probe the shell:
+/// call it from a worker.
 pub fn read() -> Vec<CliHost> {
-    let home = herdr_client::local_path::home_dir();
-    let Some(path) = config_path(herdr_client::local_var, home.as_deref(), Path::is_file) else {
+    let home = herdr_client::login_env::var("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(herdr_client::local_path::home_dir);
+    let Some(path) = config_path(herdr_client::login_env::var, home.as_deref(), Path::is_file)
+    else {
         return Vec::new();
     };
     let mut text = String::new();
