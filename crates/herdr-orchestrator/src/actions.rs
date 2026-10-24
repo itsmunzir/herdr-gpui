@@ -16,7 +16,10 @@ use herdr_remote::teleport::{
 };
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 
+pub mod pull_head;
 mod start;
+
+pub use pull_head::PullHead;
 
 /// How long `herdr agent start` may wait for the agent to be ready.
 const AGENT_START_TIMEOUT_MS: &str = "90000";
@@ -57,6 +60,9 @@ pub struct DispatchRequest {
     pub workspace_id: String,
     /// What the branch starts from; the main checkout's `HEAD` when `None`.
     pub base: Option<String>,
+    /// A review's pull request, whose head the branch starts from instead:
+    /// fetched when the repository lacks it, and required of the checkout.
+    pub pull_request: Option<PullHead>,
     /// Another host to start on; the repository's own when `None`.
     pub elsewhere: Option<Elsewhere>,
 }
@@ -401,7 +407,13 @@ fn destination(
     request: &DispatchRequest,
     cancelled: &AtomicBool,
 ) -> Result<Destination> {
-    let base = request.base.as_deref().unwrap_or("HEAD");
+    let base = match &request.pull_request {
+        Some(head) => {
+            head.fetch(site, cancelled)?;
+            head.sha.as_str()
+        }
+        None => request.base.as_deref().unwrap_or("HEAD"),
+    };
     if let Some(elsewhere) = &request.elsewhere {
         let commit =
             teleport::base_commit(&elsewhere.origin, base, cancelled).map_err(Error::Teleport)?;
@@ -560,6 +572,9 @@ fn launch(
         })?
         .result;
     *created_workspace = Some((host.clone(), created.workspace.workspace_id.clone()));
+    if let Some(head) = &request.pull_request {
+        head.verify(host, &created.worktree.path, &request.branch, cancelled)?;
+    }
     let (ssh, session) = place(&destination.target);
     run.workspace = Some(Workspace {
         backend: Backend::Herdr,

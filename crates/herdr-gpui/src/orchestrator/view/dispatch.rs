@@ -6,7 +6,7 @@ use super::{OrchestratorView, look::agent_icon};
 use crate::{
     config::{corners, mix},
     orchestrator::{
-        Action, DispatchRequest, Item, Notice, SourceKey,
+        Action, DispatchRequest, Item, Notice, PullHead, SourceKey,
         actions::valid_model,
         prompt::{self, MAX_EXTRA},
     },
@@ -327,14 +327,27 @@ impl OrchestratorView {
         let profile = dialog
             .profile
             .and_then(|index| snapshot.profiles.get(index));
-        let remote = snapshot
-            .repo
-            .as_ref()
-            .and_then(|info| info.remote.as_ref())
-            .map(|remote| remote.url.as_str());
-        let text = match (&item.pull_request, dialog.review) {
-            (Some(pr), true) => prompt::compose_review(item, pr, remote, profile, &extra),
-            _ => prompt::compose(item, profile, &extra),
+        let remote = snapshot.repo.as_ref().and_then(|info| info.remote.as_ref());
+        let url = remote.map(|remote| remote.url.as_str());
+        let (text, pull_request) = match (&item.pull_request, dialog.review) {
+            (Some(pr), true) => {
+                // The review's worktree starts at the head its prompt names,
+                // fetched from the remote the pull request was listed from.
+                let Some(remote) = remote else {
+                    return refuse(
+                        dialog,
+                        "This repository has no remote to fetch the pull request from.",
+                    );
+                };
+                let head = PullHead {
+                    number: pr.number,
+                    sha: pr.head_sha.clone(),
+                    remote: remote.name.clone(),
+                };
+                let text = prompt::compose_review(item, pr, url, profile, &extra);
+                (text, Some(head))
+            }
+            _ => (prompt::compose(item, profile, &extra), None),
         };
         let request = DispatchRequest {
             item_key: dialog.item.clone(),
@@ -345,6 +358,7 @@ impl OrchestratorView {
             branch,
             workspace_id,
             base: None,
+            pull_request,
             elsewhere: None,
         };
         Some(Ready {

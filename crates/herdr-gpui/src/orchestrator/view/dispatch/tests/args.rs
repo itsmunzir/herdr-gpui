@@ -1,7 +1,10 @@
 //! The dialog's Arguments field: filled from the config or the last
 //! dispatch, kept per agent, and split into the request's arguments.
 use super::*;
-use crate::orchestrator::{Activity, Item, ItemKey, Provider, PullRequest, SourceKey};
+use crate::orchestrator::{
+    Activity, Item, ItemKey, Provider, PullRequest, Repository, SourceKey,
+    repo::{Remote, RepoInfo},
+};
 use gpui::{Entity, VisualTestContext};
 
 /// The `[orchestrator]` table.
@@ -14,8 +17,8 @@ review_args = ["--standalone", "--agent", "review"]
 args = ["-c", "model_reasoning_effort=high", "--title", "two words"]
 "#;
 
-/// Pull request #12, listed with opencode and codex installed here.
-fn pull_request() -> Item {
+/// Pull request #12 of `penso/app`, listed from its remote `upstream`.
+pub(super) fn pull_request() -> Item {
     Item {
         key: ItemKey {
             source: SourceKey {
@@ -51,16 +54,29 @@ fn pull_request() -> Item {
     }
 }
 
+/// The config's arguments, and pull request #12 listed from `upstream`.
 fn listed(view: &mut OrchestratorView) {
     let config: crate::config::OrchestratorConfig = toml::from_str(CONFIG).unwrap();
     view.set_agent_config(&config);
     let snapshot = &mut view.repo_mut().snapshot;
-    snapshot.items = Arc::new(vec![pull_request()]);
+    let item = pull_request();
+    snapshot.repo = Some(RepoInfo {
+        repository: Repository::Local("/r/.git".into()),
+        main_root: "/r".into(),
+        beads: false,
+        remote: Some(Remote {
+            name: "upstream".into(),
+            url: "https://github.com/penso/app.git".into(),
+            source: item.key.source.clone(),
+        }),
+    });
+    snapshot.items = Arc::new(vec![item]);
     snapshot.installed_endpoint = None;
     view.refresh_rows();
 }
 
-fn open(view: &Entity<OrchestratorView>, cx: &mut VisualTestContext, review: bool) {
+/// The dialog on pull request #12, with opencode and codex installed here.
+pub(super) fn open(view: &Entity<OrchestratorView>, cx: &mut VisualTestContext, review: bool) {
     let key = pull_request().key.canonical();
     cx.update(|window, cx| {
         view.update(cx, |view, cx| {

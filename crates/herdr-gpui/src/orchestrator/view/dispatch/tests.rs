@@ -7,6 +7,7 @@ use gpui::{AppContext, TestAppContext};
 use std::sync::Arc;
 
 mod args;
+mod review_head;
 
 /// A view of one repository in a temporary folder, in a window.
 fn view_in_window(

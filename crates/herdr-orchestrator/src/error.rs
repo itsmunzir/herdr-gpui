@@ -102,6 +102,8 @@ pub enum Error {
         crate::actions::MAX_ARG_BYTES
     )]
     AgentArguments,
+    #[error(transparent)]
+    Review(#[from] crate::actions::pull_head::Error),
 }
 
 /// `map_err` adapter naming the host script that failed.

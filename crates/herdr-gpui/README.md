@@ -2278,9 +2278,15 @@ agent starts in it with the prompt. With more than one host connected, the
 dialog also ranks the hosts as [Smart Dispatch](#smart-dispatch) does; picking
 another one sets the repository up there the same way and starts the agent
 there, and its run card then acts on that host. A pull
-request's **Review with agent** does the same on an `agent/review-…` branch with a
-read-only prompt: the agent verifies the pull request, reads its diff, and
-reports findings without writing to GitHub. A run's card sends it messages, stops
+request's **Review with agent** does the same with a read-only prompt, on an
+`agent/review-…` branch that starts at the pull request's head commit, the one
+the prompt names, fetched from the repository's remote
+(`refs/pull/<number>/head`, which also holds a fork's head) when the repository
+lacks it. Its name carries that commit's first seven digits, so a later push
+gets a branch and worktree of its own; a review refuses to start when the
+pull request moved since it was listed, or when an existing branch of that
+name stands at another commit. The agent verifies the pull request, reads its
+diff, and reports findings without writing to GitHub. A run's card sends it messages, stops
 it, or removes its worktree; a bead's details can delete it with `bd`. Each of
 those asks first. Leaving the section leaves an already-started dispatch
 running; it does not remove the new worktree.

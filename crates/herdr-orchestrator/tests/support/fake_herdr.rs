@@ -7,7 +7,9 @@
 //! - `snapshot-default`, `snapshot`: `api snapshot` prints the second when it
 //!   exists, else the first;
 //! - `pane`: what `pane get` prints instead of pane `p9` on `term9`;
-//! - `busy`: how many `agent start` calls are refused as a busy shell.
+//! - `busy`: how many `agent start` calls are refused as a busy shell;
+//! - `worktree`: the checkout `worktree create` reports instead of
+//!   `/tmp/wt/377-icons`.
 
 use std::{env, fs, io::Write, path::PathBuf, process::exit};
 
@@ -39,12 +41,18 @@ fn main() {
             .or_else(|| read("snapshot-default"))
             .unwrap_or_default(),
         ["workspace", "create"] => r#"{"result":{"workspace":{"workspace_id":"w0"}}}"#.into(),
-        ["worktree", "create"] => concat!(
-            r#"{"result":{"workspace":{"workspace_id":"w9"},"tab":{"tab_id":"t9"},"#,
-            r#""root_pane":{"pane_id":"p9","terminal_id":"term9"},"#,
-            r#""worktree":{"path":"/tmp/wt/377-icons"}}}"#
-        )
-        .into(),
+        ["worktree", "create"] => {
+            let path = read("worktree").unwrap_or_else(|| "/tmp/wt/377-icons".into());
+            let path = path.trim().replace('\\', "\\\\").replace('"', "\\\"");
+            format!(
+                concat!(
+                    r#"{{"result":{{"workspace":{{"workspace_id":"w9"}},"tab":{{"tab_id":"t9"}},"#,
+                    r#""root_pane":{{"pane_id":"p9","terminal_id":"term9"}},"#,
+                    r#""worktree":{{"path":"{}"}}}}}}"#
+                ),
+                path
+            )
+        }
         ["pane", "get"] => read("pane").unwrap_or_else(|| {
             r#"{"result":{"pane":{"pane_id":"p9","terminal_id":"term9"}}}"#.into()
         }),

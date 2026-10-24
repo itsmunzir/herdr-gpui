@@ -12,6 +12,7 @@ mod agent_args;
 mod agent_name;
 mod parent;
 mod remove;
+mod review_head;
 mod startup;
 
 /// `tests/support/fake_herdr.rs`, compiled once per test process: a program
@@ -138,6 +139,7 @@ fn request() -> DispatchRequest {
         branch: "377-icons".into(),
         workspace_id: "w1".into(),
         base: None,
+        pull_request: None,
         elsewhere: None,
     }
 }
