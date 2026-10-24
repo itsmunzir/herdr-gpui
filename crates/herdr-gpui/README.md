@@ -2266,7 +2266,11 @@ repository allows and names the head commit shown, so GitHub refuses it if the
 branch moved.
 
 **Dispatch agent** opens a dialog: a prompt, an agent installed on the
-selected destination host, an optional model (passed as `--model`), a branch
+selected destination host, an optional model (passed as `--model`), arguments
+the agent starts with after it (split as a shell splits words, with quotes
+keeping spaces, but never run through one; they open on what the tab last
+dispatched that agent with, else on `[orchestrator.agents.<agent>]` in the
+config), a branch
 (`agent/<number>-<slug>-<hash>` as agent-launcher names it, editable), and
 extra instructions. The new worktree is
 created from the main checkout's `HEAD` in the workspace's repository, and the

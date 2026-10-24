@@ -1,7 +1,8 @@
 //! A fake `herdr` CLI for the orchestrator's dispatch tests, compiled with
 //! `rustc` by the test that uses it so it runs on every client platform. It
-//! logs each call's arguments to `$HOME/calls` and answers as Herdr would; its
-//! state is files in `$HOME`:
+//! logs each call's arguments to `$HOME/calls`, and to `$HOME/argv` with each
+//! argument ended by a unit separator (`\x1f`) so one holding a space stays
+//! whole, and answers as Herdr would; its state is files in `$HOME`:
 //! - `fail`: a call whose arguments contain this text exits 1;
 //! - `snapshot-default`, `snapshot`: `api snapshot` prints the second when it
 //!   exists, else the first;
@@ -20,6 +21,13 @@ fn main() {
         .open(home.join("calls"))
         .expect("calls");
     writeln!(calls, "{line}").expect("calls");
+    let mut argv = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(home.join("argv"))
+        .expect("argv");
+    let separated: String = args.iter().map(|arg| format!("{arg}\x1f")).collect();
+    writeln!(argv, "{separated}").expect("argv");
     let fail = fs::read_to_string(home.join("fail")).unwrap_or_default();
     if !fail.is_empty() && line.contains(&fail) {
         exit(1);

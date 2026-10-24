@@ -47,6 +47,9 @@ pub struct DispatchRequest {
     pub kind: AgentKind,
     /// Passed to the agent as `--model`, when chosen.
     pub model: Option<String>,
+    /// Passed to the agent after `--model`, each one argument as written:
+    /// Herdr quotes them for the pane's shell, so none is split or expanded.
+    pub args: Vec<String>,
     pub prompt: String,
     pub branch: String,
     /// The Herdr workspace of the repository, whose worktree list gets the
@@ -103,6 +106,21 @@ pub fn valid_model(model: &str) -> bool {
         && model
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '@'))
+}
+
+/// The most arguments an agent is started with, and the longest one.
+pub const MAX_ARGS: usize = 32;
+pub const MAX_ARG_BYTES: usize = 1024;
+
+/// Whether `args` can follow an agent's executable: a bounded list of
+/// bounded arguments without control characters, which Herdr refuses.
+/// Leading dashes are the point, so options are not filtered as in a model.
+pub fn valid_args(args: &[impl AsRef<str>]) -> bool {
+    args.len() <= MAX_ARGS
+        && args.iter().all(|arg| {
+            let arg = arg.as_ref();
+            arg.len() <= MAX_ARG_BYTES && !arg.chars().any(char::is_control)
+        })
 }
 
 /// Runs `action` to completion; the success text, or why it failed.
@@ -308,6 +326,9 @@ struct Destination {
 }
 
 fn dispatch(site: &Site, request: &DispatchRequest, cancelled: &AtomicBool) -> Result<()> {
+    if !valid_args(&request.args) {
+        return Err(Error::AgentArguments);
+    }
     let mut store = Store::open(&site.database)?;
     let name = agent_name();
     let now = Utc::now();
@@ -571,9 +592,13 @@ fn launch(
         AGENT_START_TIMEOUT_MS,
     ];
     let model = request.model.as_deref().filter(|model| valid_model(model));
-    if let Some(model) = model {
-        start.extend(["--", "--model", model]);
+    if model.is_some() || !request.args.is_empty() {
+        start.push("--");
     }
+    if let Some(model) = model {
+        start.extend(["--model", model]);
+    }
+    start.extend(request.args.iter().map(String::as_str));
     start::agent(
         host,
         &start,
