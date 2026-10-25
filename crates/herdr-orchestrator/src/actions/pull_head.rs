@@ -1,9 +1,10 @@
 //! A review's worktree starts at the pull request's head commit, the one
 //! its prompt names, so the agent reads and runs the code under review
-//! rather than the main checkout's `HEAD`. The commit is fetched from the
-//! repository's remote (`refs/pull/<number>/head`, which also holds a fork's
-//! head) when the repository lacks it, and the new checkout is checked to be
-//! at it, since Herdr checks out a branch that already exists as it is.
+//! rather than the main checkout's `HEAD`. The remote's
+//! `refs/pull/<number>/head` (which also holds a fork's head) must still be
+//! that commit, the commit is fetched from it when the repository lacks it,
+//! and the new checkout is checked to be at it, since Herdr checks out a
+//! branch that already exists as it is.
 
 use super::{Host, Result, Site, script};
 use std::{sync::atomic::AtomicBool, time::Duration};
@@ -11,6 +12,7 @@ use std::{sync::atomic::AtomicBool, time::Duration};
 /// How long a fetch may go without output: a large pull request can be
 /// quiet for a while, as Teleport's fetches are.
 const FETCH_IDLE: Duration = Duration::from_secs(300);
+const READING: &str = "Reading the pull request's head";
 const FETCHING: &str = "Fetching the pull request";
 const CHECKING: &str = "Checking the review's checkout";
 
@@ -56,12 +58,37 @@ impl PullHead {
         Ok(())
     }
 
-    /// Makes sure the repository at `site.main_root` has the head commit,
-    /// fetching the pull request's head ref when it does not. The fetch
-    /// writes only `FETCH_HEAD`; the review's branch keeps the commit.
+    /// Makes sure the pull request's head ref on the remote is still the
+    /// head commit, and that the repository at `site.main_root` has it,
+    /// fetching the ref when it does not. The fetch writes only
+    /// `FETCH_HEAD`; the review's branch keeps the commit.
     pub(super) fn fetch(&self, site: &Site, cancelled: &AtomicBool) -> Result<()> {
         self.check()?;
         let root = site.main_root.as_str();
+        let reference = format!("refs/pull/{}/head", self.number);
+        // Whether the repository has the commit says nothing of whether it is
+        // still the head: a push keeps the old head as the new one's parent.
+        let listed = site
+            .host
+            .exec(
+                "git",
+                &["-C", root, "ls-remote", "--", &self.remote, &reference],
+                Host::QUERY_IDLE,
+                cancelled,
+            )
+            .map_err(script(READING))?;
+        // A pattern matches any ref ending in it, so the name must be whole.
+        let current = String::from_utf8_lossy(&listed).lines().find_map(|line| {
+            line.split_once('\t')
+                .filter(|(_, name)| *name == reference)
+                .map(|(sha, _)| sha.to_owned())
+        });
+        if !current.is_some_and(|sha| sha.eq_ignore_ascii_case(&self.sha)) {
+            return Err(Error::Moved {
+                number: self.number,
+            }
+            .into());
+        }
         let commit = format!("{}^{{commit}}", self.sha);
         let has = || {
             site.host
@@ -76,7 +103,6 @@ impl PullHead {
         if has() {
             return Ok(());
         }
-        let reference = format!("refs/pull/{}/head", self.number);
         site.host
             .exec(
                 "git",
@@ -94,7 +120,7 @@ impl PullHead {
                 cancelled,
             )
             .map_err(script(FETCHING))?;
-        // The ref moved past the commit the prompt names.
+        // The ref moved past the commit the prompt names since it was read.
         if !has() {
             return Err(Error::Moved {
                 number: self.number,

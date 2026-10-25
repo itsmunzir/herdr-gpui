@@ -128,55 +128,67 @@ fn a_head_the_repository_already_has_is_not_fetched_again() {
     let dir = tempfile::tempdir().unwrap();
     let site = site(dir.path(), "");
     let (head, checkout) = pull_request_on_remote(dir.path(), &site);
-    git(
-        Path::new(&site.main_root),
-        &["fetch", "-q", "origin", "refs/pull/7/head"],
-    );
+    let root = Path::new(&site.main_root);
+    git(root, &["fetch", "-q", "origin", "refs/pull/7/head"]);
+    let fetched = root.join(".git/FETCH_HEAD");
+    std::fs::remove_file(&fetched).unwrap();
     std::fs::write(
         dir.path().join("home/worktree"),
         checkout.to_string_lossy().as_bytes(),
     )
     .unwrap();
-    // A remote that does not exist would fail any fetch.
     perform(
         &site,
-        &Action::Dispatch(Box::new(review(&head, "nowhere"))),
+        &Action::Dispatch(Box::new(review(&head, "origin"))),
         &AtomicBool::new(false),
     )
     .unwrap();
     assert!(calls(dir.path())[1].contains(&format!(" --base {head} ")));
+    // Any fetch would have written FETCH_HEAD again.
+    assert!(!fetched.exists(), "the head was fetched again");
 }
 
 #[test]
-fn a_pull_request_that_moved_is_refused_before_a_worktree_is_made() {
-    let dir = tempfile::tempdir().unwrap();
-    let site = site(dir.path(), "");
-    pull_request_on_remote(dir.path(), &site);
-    // The head the prompt named is no longer what refs/pull/7/head holds.
-    let stale = "0123456789abcdef0123456789abcdef01234567";
-    let error = perform(
-        &site,
-        &Action::Dispatch(Box::new(review(stale, "origin"))),
-        &AtomicBool::new(false),
-    )
-    .unwrap_err();
-    assert!(
-        matches!(error, Error::Review(pull_head::Error::Moved { number: 7 })),
-        "{error}"
-    );
-    assert!(
-        !calls(dir.path())
-            .iter()
-            .any(|call| call.starts_with("worktree create")),
-        "no worktree was made"
-    );
-    let run = Store::open(&site.database)
-        .unwrap()
-        .runs()
-        .unwrap()
-        .remove(0);
-    assert_eq!(run.state, RunState::Failed);
-    assert!(run.message.unwrap().contains("changed since it was read"));
+fn a_pull_request_pushed_to_since_it_was_read_is_refused_before_a_worktree_is_made() {
+    // Whether or not the repository already fetched the head it was read at.
+    for cached in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let site = site(dir.path(), "");
+        let (read, work) = pull_request_on_remote(dir.path(), &site);
+        if cached {
+            git(
+                Path::new(&site.main_root),
+                &["fetch", "-q", "origin", "refs/pull/7/head"],
+            );
+        }
+        // A push on top of the head the prompt names: fetching the new head
+        // brings the old one back as its parent.
+        git(&work, &["commit", "-q", "--allow-empty", "-m", "a fix"]);
+        git(&work, &["push", "-q", "origin", "HEAD:refs/pull/7/head"]);
+        let error = perform(
+            &site,
+            &Action::Dispatch(Box::new(review(&read, "origin"))),
+            &AtomicBool::new(false),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, Error::Review(pull_head::Error::Moved { number: 7 })),
+            "cached {cached}: {error}"
+        );
+        assert!(
+            !calls(dir.path())
+                .iter()
+                .any(|call| call.starts_with("worktree create")),
+            "cached {cached}: no worktree was made"
+        );
+        let run = Store::open(&site.database)
+            .unwrap()
+            .runs()
+            .unwrap()
+            .remove(0);
+        assert_eq!(run.state, RunState::Failed);
+        assert!(run.message.unwrap().contains("changed since it was read"));
+    }
 }
 
 #[test]
