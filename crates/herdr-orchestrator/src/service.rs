@@ -19,6 +19,7 @@ use herdr_client::ConnectTarget;
 use herdr_github::Tokens;
 use herdr_remote::teleport::{AgentKind, Host};
 use secrecy::SecretString;
+use sources::{recognize, statuses};
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
@@ -29,6 +30,10 @@ use std::{
     },
     time::{Duration, Instant},
 };
+
+mod sources;
+
+pub use sources::sources;
 
 /// How often other applications' writes (agent-launcher's runs) are looked for.
 const RELOAD: Duration = Duration::from_secs(5);
@@ -523,9 +528,7 @@ impl Worker {
                 return Err(error);
             }
         };
-        if let Some(remote) = &mut info.remote {
-            gitlab::recognize(&mut remote.source, gitlab::cli_hosts::read);
-        }
+        recognize(&mut info, gitlab::cli_hosts::read);
         if std::mem::take(&mut self.unreached) {
             self.snapshot.error = None;
         }
@@ -606,17 +609,7 @@ impl Worker {
         }
         let store = Store::open(&path)?;
         self.snapshot.access = Some(store.access());
-        self.snapshot.sources = sources(&info)
-            .into_iter()
-            .map(|(key, supported)| SourceStatus {
-                key,
-                state: if supported {
-                    SyncState::Syncing
-                } else {
-                    SyncState::Unsupported
-                },
-            })
-            .collect();
+        self.snapshot.sources = statuses(&info);
         self.site = Some(Site {
             host: host.clone(),
             target: self.request.target.clone(),
@@ -688,6 +681,7 @@ impl Worker {
                 return;
             }
         }
+        self.recognize(gitlab::cli_hosts::read);
         let Some(info) = self.snapshot.repo.clone() else {
             return;
         };
@@ -920,6 +914,18 @@ impl Worker {
         }
     }
 
+    /// Reads the shown remote as GitLab once glab knows its host, such as
+    /// through an `ssh_host` added after the repository was found.
+    fn recognize(&mut self, cli: impl FnOnce() -> Vec<gitlab::cli_hosts::CliHost>) {
+        let Some(mut info) = self.snapshot.repo.clone() else {
+            return;
+        };
+        if recognize(&mut info, cli) {
+            self.snapshot.sources = statuses(&info);
+            self.snapshot.repo = Some(info);
+        }
+    }
+
     fn set_state(&mut self, key: &SourceKey, state: SyncState) {
         if let Some(status) = self.snapshot.sources.iter_mut().find(|s| s.key == *key) {
             status.state = state;
@@ -969,21 +975,5 @@ fn agents(found: &[String]) -> Vec<AgentKind> {
     AgentKind::ALL
         .into_iter()
         .filter(|kind| found.iter().any(|binary| binary == kind.binary()))
-        .collect()
-}
-
-/// The sources a repository has, and whether this build can read each.
-pub fn sources(info: &RepoInfo) -> Vec<(SourceKey, bool)> {
-    let remote = info.remote.as_ref().map(|remote| {
-        let supported = match remote.source.provider {
-            Provider::Github => remote.source.host == "github.com",
-            Provider::Gitlab => true,
-            Provider::Beads => false,
-        };
-        (remote.source.clone(), supported)
-    });
-    remote
-        .into_iter()
-        .chain(info.beads_source().map(|key| (key, true)))
         .collect()
 }

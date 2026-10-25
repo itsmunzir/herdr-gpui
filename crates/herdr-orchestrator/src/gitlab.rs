@@ -130,13 +130,16 @@ impl Scheme {
 /// but the GitLab CLI knows that host, as an instance or an instance's
 /// `ssh_host`. Only the provider changes; the host and path stay as
 /// agent-launcher keys them. `cli` reads glab's config, only when needed.
-pub fn recognize(source: &mut SourceKey, cli: impl FnOnce() -> Vec<cli_hosts::CliHost>) {
+/// Returns whether `source` changed.
+pub fn recognize(source: &mut SourceKey, cli: impl FnOnce() -> Vec<cli_hosts::CliHost>) -> bool {
     if source.provider != Provider::Github || source.host == "github.com" {
-        return;
+        return false;
     }
-    if cli_hosts::knows(&cli(), &source.host) {
+    let known = cli_hosts::knows(&cli(), &source.host);
+    if known {
         source.provider = Provider::Gitlab;
     }
+    known
 }
 
 /// Where a project's API is. The remote's host, unless the GitLab CLI names
