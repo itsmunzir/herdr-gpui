@@ -225,6 +225,49 @@ fn a_branch_herdr_checked_out_elsewhere_is_refused_and_its_checkout_removed() {
 }
 
 #[test]
+fn a_checkout_not_at_the_head_that_cannot_be_removed_stays_the_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    // The checkout is refused, and removing it fails too, as over a dropped
+    // SSH connection.
+    let site = site(dir.path(), "worktree remove");
+    let (head, _) = pull_request_on_remote(dir.path(), &site);
+    std::fs::write(dir.path().join("home/worktree"), site.main_root.as_bytes()).unwrap();
+    let error = perform(
+        &site,
+        &Action::Dispatch(Box::new(review(&head, "origin"))),
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(error, Error::Review(pull_head::Error::Branch { .. })),
+        "{error}"
+    );
+    let calls = calls(dir.path());
+    assert!(!calls.iter().any(|call| call.starts_with("agent start")));
+    assert_eq!(
+        calls.last().unwrap(),
+        "worktree remove --workspace w9 --force"
+    );
+    // Remove can still find the checkout, and the host it is on.
+    let store = Store::open(&site.database).unwrap();
+    let run = store.runs().unwrap().remove(0);
+    assert_eq!(run.state, RunState::Failed);
+    let workspace = run.workspace.as_ref();
+    assert_eq!(
+        workspace.map(|workspace| (workspace.id.as_str(), workspace.path.as_deref())),
+        Some(("w9", Some(Path::new(&site.main_root)))),
+        "the run keeps its workspace"
+    );
+    let sessions = store.sessions().unwrap();
+    assert!(
+        sessions
+            .iter()
+            .any(|session| session.run_id == run.id && session.workspace_id == "w9"),
+        "the run keeps its session: {sessions:?}"
+    );
+}
+
+#[test]
 fn a_head_or_remote_git_could_misread_is_refused_before_git_runs() {
     let dir = tempfile::tempdir().unwrap();
     let site = site(dir.path(), "");

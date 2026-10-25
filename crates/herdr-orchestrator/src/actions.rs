@@ -572,9 +572,6 @@ fn launch(
         })?
         .result;
     *created_workspace = Some((host.clone(), created.workspace.workspace_id.clone()));
-    if let Some(head) = &request.pull_request {
-        head.verify(host, &created.worktree.path, &request.branch, cancelled)?;
-    }
     let (ssh, session) = place(&destination.target);
     run.workspace = Some(Workspace {
         backend: Backend::Herdr,
@@ -595,6 +592,11 @@ fn launch(
         updated_at: run.updated_at,
     };
     store.update_run(run, Some(&herdr_session))?;
+    // Checked once the run records the checkout and its session, so a
+    // refused one that cannot be removed is still left for Remove.
+    if let Some(head) = &request.pull_request {
+        head.verify(host, &created.worktree.path, &request.branch, cancelled)?;
+    }
     let mut start = vec![
         "agent",
         "start",
