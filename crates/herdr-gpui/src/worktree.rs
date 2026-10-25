@@ -128,7 +128,17 @@ pub(super) fn checkout_preview(root: &str, repo: &str, branch: &str) -> String {
 pub(super) use herdr_github::checkout::{checkout_root, left_checkout};
 
 mod typed;
-pub(crate) use typed::format_typed;
+pub(crate) use typed::format_edit;
+
+/// Whether Git itself takes `branch` as a branch name, as
+/// `git check-ref-format --branch` judges it.
+#[cfg(test)]
+pub(crate) fn git_accepts(branch: &str) -> bool {
+    std::process::Command::new("git")
+        .args(["check-ref-format", "--branch", branch])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
 
 #[cfg(test)]
 mod tests {

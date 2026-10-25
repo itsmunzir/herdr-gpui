@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used)]
 
-use super::format_typed;
-use crate::worktree::{branch_for_name, validate_branch};
+use super::{format_edit, format_typed};
+use crate::worktree::{branch_for_name, git_accepts, validate_branch};
 
 /// `keys` typed one at a time at the end of an empty field.
 fn typed(keys: &str) -> String {
@@ -16,16 +16,6 @@ fn typed(keys: &str) -> String {
 /// `text` pasted into an empty field.
 fn pasted(text: &str) -> String {
     format_typed("", text, "")
-}
-
-/// Whether Git itself takes `branch` as a branch name.
-fn git_accepts(branch: &str) -> bool {
-    std::process::Command::new("git")
-        .args(["check-ref-format", "--branch", branch])
-        .output()
-        .unwrap()
-        .status
-        .success()
 }
 
 #[test]
@@ -138,10 +128,69 @@ fn an_insertion_never_rewrites_the_text_around_it() {
         (("", "x", "-y"), "x"),
     ] {
         assert_eq!(
-            format_typed(before, inserted, after),
-            kept,
+            format_edit(before, inserted, after),
+            (kept.to_owned(), after.to_owned()),
             "{before:?} + {inserted:?} + {after:?}"
         );
+    }
+}
+
+/// A deletion or cut inserts nothing to cut back, so where the text either
+/// side of it would meet in a sequence Git refuses, the text after the caret
+/// gives way, only as far as it must, and the result is a branch Git takes.
+#[test]
+fn a_deletion_never_joins_a_refused_sequence() {
+    for ((before, after), rest) in [
+        // `x` deleted from `a.x.b`, which would leave `a..b`.
+        (("a.", ".b"), "b"),
+        (("feat/", "/login"), "login"),
+        (("a-", "-b"), "b"),
+        (("a@", "{b"), "-b"),
+        // A component, or the name, would start with a dot, dash or slash.
+        (("feat/", ".x"), "x"),
+        (("", "-b"), "b"),
+        (("", ".b"), "b"),
+        (("", "/b"), "b"),
+        (("", "-.b"), "b"),
+        // A component now closed after `.lock`.
+        (("deps.lock", "/x"), "x"),
+        (("deps.lo", "ck/x"), "ckx"),
+        // Nothing refused, so nothing moves.
+        (("a.", "b.c"), "b.c"),
+        (("feat/", "log-in"), "log-in"),
+        (("", "feat/login"), "feat/login"),
+    ] {
+        assert_eq!(
+            format_edit(before, "", after),
+            (String::new(), rest.to_owned()),
+            "{before:?} + {after:?}"
+        );
+        let branch = format!("{before}{rest}");
+        assert!(validate_branch(&branch).is_ok(), "{branch}");
+        assert!(git_accepts(&branch), "{branch}");
+    }
+}
+
+/// Typing over a selection is an insertion and a deletion at once: the
+/// insertion is cut back to join the text after it, and that text gives way
+/// only where the deletion alone joined a refused sequence.
+#[test]
+fn replacing_a_selection_joins_both_sides() {
+    for ((before, inserted, after), edit) in [
+        (("a.", "y", ".b"), ("y", ".b")),
+        (("a.", " ", ".b"), ("-", ".b")),
+        (("a.", "y.", ".b"), ("y", ".b")),
+        (("", "x", "-b"), ("x", "-b")),
+        (("feat/", "Log in", "/x"), ("Log-in", "/x")),
+    ] {
+        let (inserted_kept, rest) = edit;
+        assert_eq!(
+            format_edit(before, inserted, after),
+            (inserted_kept.to_owned(), rest.to_owned()),
+            "{before:?} + {inserted:?} + {after:?}"
+        );
+        let branch = format!("{before}{inserted_kept}{rest}");
+        assert!(git_accepts(&branch), "{branch}");
     }
 }
 

@@ -3,6 +3,10 @@
 //! typed or pasted is changed, never the text around it: the caret stays right
 //! after the insertion, and nothing already in the field moves under it.
 //!
+//! A deletion or cut has nothing of its own to change, so when it brings
+//! together two characters Git refuses side by side, the text after the caret
+//! gives way instead, and the caret stays where the deletion left it.
+//!
 //! The rules are `git check-ref-format`'s, applied as each character arrives.
 //! Letters keep their case and `/` keeps namespaces such as `feat/login`. An
 //! ending that more typing can still make valid (a trailing `.`, `/` or
@@ -22,7 +26,7 @@ const SEPARATORS: [char; 7] = ['~', '^', ':', '?', '*', '[', '\\'];
 /// ending in `.lock`, and a dash after another, so a typed `Fix - login`
 /// reads `Fix-login`. Characters are dropped from the end of the insertion
 /// until it joins `after` the same way. Empty when nothing is left.
-pub(crate) fn format_typed(before: &str, inserted: &str, after: &str) -> String {
+fn format_typed(before: &str, inserted: &str, after: &str) -> String {
     let mut name = before.to_owned();
     // One character is a key typed, so a space there is the dash wanted next.
     // A paste's leading space still parts it from the word before.
@@ -31,21 +35,48 @@ pub(crate) fn format_typed(before: &str, inserted: &str, after: &str) -> String 
         None => inserted,
     };
     for ch in inserted.chars() {
-        if ch.is_control() && !ch.is_whitespace() {
-            continue;
-        }
-        let last = name.chars().next_back();
-        let separator = separates(ch) || (ch == '{' && last == Some('@'));
-        let ch = if separator { '-' } else { ch };
-        // A dash standing in for a separator also stays off a slash.
-        if accepts(&name, ch) && !(separator && last == Some('/')) {
-            name.push(ch);
-        }
+        push(&mut name, ch);
     }
     while name.len() > before.len() && !joins(&name, after) {
         name.pop();
     }
     name.split_off(before.len())
+}
+
+/// An edit replacing what lies between `before` and `after`, as it may leave
+/// the field: the text inserted, as `format_typed` keeps it, and the text
+/// that then follows it. An insertion is cut back so `after` stays as it was,
+/// but a deletion inserts nothing, so `a.x.b` without its `x` would read
+/// `a..b`. There `after` gives way by the rules typing follows: a `.`, `/` or
+/// `-` doubled collapses to one, `{` after `@` becomes a dash, and a dash,
+/// dot or slash that would start the name, a dot that would start a
+/// component, or a slash closing a component that ends in `.lock` is left
+/// out. The caret goes after the insertion, so it does not move.
+pub(crate) fn format_edit(before: &str, inserted: &str, after: &str) -> (String, String) {
+    let inserted = format_typed(before, inserted, after);
+    let mut name = format!("{before}{inserted}");
+    let joined = name.len();
+    for ch in after.chars() {
+        push(&mut name, ch);
+    }
+    let after = name.split_off(joined);
+    (inserted, after)
+}
+
+/// Adds `ch` to the end of `name` as a key typed there would: whitespace or
+/// one of `~^:?*[\` as a dash, and nothing when it would form a sequence Git
+/// refuses.
+fn push(name: &mut String, ch: char) {
+    if ch.is_control() && !ch.is_whitespace() {
+        return;
+    }
+    let last = name.chars().next_back();
+    let separator = separates(ch) || (ch == '{' && last == Some('@'));
+    let ch = if separator { '-' } else { ch };
+    // A dash standing in for a separator also stays off a slash.
+    if accepts(name, ch) && !(separator && last == Some('/')) {
+        name.push(ch);
+    }
 }
 
 /// Whether `ch` always stands for a dash.

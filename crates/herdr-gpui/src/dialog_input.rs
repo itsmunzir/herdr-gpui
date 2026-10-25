@@ -4,6 +4,11 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::{HerdrWindow, input::ViewInputHandler, words};
 
+/// Rewrites an edit, given the text left and right of the range it replaces:
+/// what to insert there, and what then follows it, which a deletion can
+/// change.
+type Format = fn(&str, &str, &str) -> (String, String);
+
 // Byte offsets internally; only the platform input boundary uses UTF-16.
 #[derive(Default)]
 pub(super) struct DialogInput {
@@ -14,10 +19,9 @@ pub(super) struct DialogInput {
     pub bounds: Bounds<Pixels>,
     line: Option<ShapedLine>,
     scroll: Pixels,
-    /// Rewrites committed text, given the text left and right of where it
-    /// goes, before it is inserted. Composition is shown as typed and only
-    /// its commit is rewritten, so the IME is never fought mid-word.
-    format: Option<fn(&str, &str, &str) -> String>,
+    /// Rewrites each edit. Composition is shown as typed and only its commit
+    /// is rewritten, so the IME is never fought mid-word.
+    format: Option<Format>,
     /// What a screen reader calls the field, when a caption beside it
     /// names it rather than the field itself.
     pub label: Option<&'static str>,
@@ -36,7 +40,7 @@ impl DialogInput {
     /// refuses as it is typed.
     pub fn branch(text: String) -> Self {
         Self {
-            format: Some(crate::worktree::format_typed),
+            format: Some(crate::worktree::format_edit),
             label: Some("Branch"),
             ..Self::new(text)
         }
@@ -63,30 +67,42 @@ impl DialogInput {
             .map(|r| self.range_from_utf16(r))
             .or_else(|| self.marked.clone())
             .unwrap_or_else(|| self.selection.clone());
-        let formatted = self
-            .format
-            .filter(|_| !marked)
-            .map(|format| format(&self.text[..range.start], text, &self.text[range.end..]));
+        let formatted = self.format.filter(|_| !marked).map(|format| {
+            // Cut to length first, so the cut cannot undo how it was joined.
+            let text: String = text.chars().take(4096).collect();
+            format(&self.text[..range.start], &text, &self.text[range.end..])
+        });
         // Text that is all left out changes nothing, so a stray key does not
         // also delete the selection it was typed over; a composition being
         // committed is still removed.
-        if formatted.as_ref().is_some_and(String::is_empty)
+        if formatted
+            .as_ref()
+            .is_some_and(|(inserted, _)| inserted.is_empty())
             && !text.is_empty()
             && self.marked.is_none()
         {
             return;
         }
-        let text: String = formatted
-            .as_deref()
-            .unwrap_or(text)
+        // A formatted edit rewrites through the end, since what follows the
+        // range can give way to what now comes before it.
+        let (text, range, after) = match &formatted {
+            Some((inserted, after)) => (
+                inserted.as_str(),
+                range.start..self.text.len(),
+                after.as_str(),
+            ),
+            None => (text, range, ""),
+        };
+        let text: String = text
             .chars()
             .filter(|c| !c.is_control())
             .take(4096)
             .collect();
-        if self.text.len() - range.len() + text.len() > 16384 {
+        if self.text.len() - range.len() + text.len() + after.len() > 16384 {
             return;
         }
-        self.text.replace_range(range.clone(), &text);
+        self.text
+            .replace_range(range.clone(), &format!("{text}{after}"));
         let end = range.start + text.len();
         self.selection = if let Some(selected) = selected {
             let start = byte_offset(&text, selected.start);
@@ -406,6 +422,21 @@ mod tests {
             input.range_from_utf16(999..1000),
             input.text.len()..input.text.len()
         );
+    }
+
+    /// A composition committed as text the branch field leaves out is
+    /// removed, and the text either side of it joins as after a deletion.
+    #[test]
+    fn a_composition_committed_to_nothing_joins_like_a_deletion() {
+        let mut input = DialogInput::branch("a.x.b".into());
+        input.selection = 2..3;
+        input.replace(None, "\u{3002}", true, Some(1..1));
+        assert_eq!(input.text, "a.\u{3002}.b");
+        input.replace(None, ".", false, None);
+        assert_eq!(input.text, "a.b");
+        assert_eq!(input.selection, 2..2);
+        assert!(input.marked.is_none());
+        assert!(crate::worktree::git_accepts(&input.text));
     }
 
     #[gpui::test]
