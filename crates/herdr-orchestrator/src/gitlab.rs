@@ -10,7 +10,7 @@
 //! an instance served at `gitlab.example.com`, is read from the instance
 //! whose `ssh_host` the GitLab CLI's config names it, as glab itself does.
 
-use super::{Activity, Checkpoint, Item, ItemKey, SourceKey};
+use super::{Activity, Checkpoint, Item, ItemKey, Provider, SourceKey};
 use chrono::{DateTime, SecondsFormat, Utc};
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
@@ -123,6 +123,19 @@ impl Scheme {
             Self::Http => "http",
             Self::Https => "https",
         }
+    }
+}
+
+/// `source` as a GitLab project when its host's name alone reads as GitHub
+/// but the GitLab CLI knows that host, as an instance or an instance's
+/// `ssh_host`. Only the provider changes; the host and path stay as
+/// agent-launcher keys them. `cli` reads glab's config, only when needed.
+pub fn recognize(source: &mut SourceKey, cli: impl FnOnce() -> Vec<cli_hosts::CliHost>) {
+    if source.provider != Provider::Github || source.host == "github.com" {
+        return;
+    }
+    if cli_hosts::knows(&cli(), &source.host) {
+        source.provider = Provider::Gitlab;
     }
 }
 

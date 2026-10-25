@@ -187,6 +187,15 @@ pub fn by_ssh_host<'a>(hosts: &'a [CliHost], remote_host: &str) -> Option<&'a Cl
     })
 }
 
+/// Whether glab knows `remote_host`, as an instance or as an instance's
+/// `ssh_host`.
+pub fn knows(hosts: &[CliHost], remote_host: &str) -> bool {
+    hosts
+        .iter()
+        .any(|host| host.host.eq_ignore_ascii_case(remote_host))
+        || by_ssh_host(hosts, remote_host).is_some()
+}
+
 /// `host` without a `:port`; a bracketed IPv6 address keeps its colons.
 fn without_port(host: &str) -> &str {
     match host.strip_prefix('[') {

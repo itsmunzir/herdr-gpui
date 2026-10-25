@@ -308,3 +308,40 @@ fn an_unreachable_api_names_the_address_it_tried() {
     );
     assert!(error.to_string().contains(&origin), "{error}");
 }
+
+/// A host whose name reads as neither GitLab nor GitHub, holding a project
+/// one group deep, was taken for GitHub and marked unsupported before the
+/// mapping was ever read. glab knowing the host makes it a GitLab project.
+#[test]
+fn a_host_glab_knows_is_a_gitlab_source() {
+    let config = "hosts:\n    git.corp.example:\n        ssh_host: ssh.corp.example\n";
+    let output =
+        "common\t/repo/.git\nmain\t/repo\nremote\torigin\tgit@ssh.corp.example:team/app.git\n";
+    let mut info = crate::repo::parse(&herdr_client::ConnectTarget::Local, output).unwrap();
+    assert_eq!(
+        info.remote.as_ref().unwrap().source.provider,
+        Provider::Github
+    );
+    let remote = info.remote.as_mut().unwrap();
+    gitlab::recognize(&mut remote.source, || cli_hosts::parse(config));
+    let expected = SourceKey {
+        provider: Provider::Gitlab,
+        host: "ssh.corp.example".into(),
+        repository: "team/app".into(),
+    };
+    assert_eq!(crate::service::sources(&info), vec![(expected, true)]);
+
+    for (remote, provider) in [
+        ("git@git.corp.example:team/app.git", Provider::Gitlab),
+        ("git@other.example:team/app.git", Provider::Github),
+        ("git@github.com:team/app.git", Provider::Github),
+    ] {
+        let mut source = parse_remote_url(remote).unwrap();
+        gitlab::recognize(&mut source, || cli_hosts::parse(config));
+        assert_eq!(source.provider, provider, "{remote}");
+    }
+    // github.com is never looked up in glab's config.
+    let mut source = parse_remote_url("git@github.com:team/app.git").unwrap();
+    gitlab::recognize(&mut source, || unreachable!());
+    assert_eq!(source.provider, Provider::Github);
+}

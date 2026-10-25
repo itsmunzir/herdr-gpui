@@ -502,7 +502,7 @@ impl Worker {
     fn found(&mut self, host: &Host, detected: Result<(RepoInfo, Extras)>) -> Result<()> {
         let cache = self.cache(false);
         let key = cache_key(&self.request.target, &self.request.checkout);
-        let (info, extras) = match detected {
+        let (mut info, extras) = match detected {
             Ok(found) => found,
             Err(Error::Script { operation, source }) if source.host_unreached() => {
                 self.unreached = true;
@@ -523,6 +523,9 @@ impl Worker {
                 return Err(error);
             }
         };
+        if let Some(remote) = &mut info.remote {
+            gitlab::recognize(&mut remote.source, gitlab::cli_hosts::read);
+        }
         if std::mem::take(&mut self.unreached) {
             self.snapshot.error = None;
         }
