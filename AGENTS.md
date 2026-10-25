@@ -35,6 +35,7 @@ Closing or detaching the GUI must leave the daemon and its terminals running.
 | `crates/herdr-vcs` | Git on the checkouts the app shows: working-tree status, commit, push, and pull request creation, checkpoints kept as Git refs on each host, and the code search index; no GPUI (the app runs the workers from its views) |
 | `crates/herdr-orchestrator` | The orchestrator's backend: issue and pull request records, the per-repository SQLite database, the GitHub, GitLab, and Beads readers, agent dispatch, and the worker; also the app's cache database and private-file setup; no GPUI (the app draws the sections and pages) |
 | `crates/herdr-remote` | Machines beyond this computer's daemon: the cloud providers (one feature each), their config tables and saved devices, running scripts on any host, and Teleport's core; no GPUI (the app runs its jobs and draws its views) |
+| `crates/herdr-remote-control` | Remote control from a phone. With the `server` feature, the `herdr-remote-control` daemon: HTTPS with its own CA, dual-approval pairing, Web Push, and chats and terminal tabs through Herdr's API socket. Without it, what Herdr UI uses: the daemon's control protocol, the `[remote]` config table, the user service install, and the pairing state; no GPUI, and no Tokio without `server` |
 | `crates/herdr-updater` | The in-app update service: release checks, signed manifests, staging, the install helpers, and the release identity (`APP_ID`, `APP_VERSION`); no GPUI |
 | `crates/herdr-diagnostics` | The app's log file and crash reports: the bounded capture of the crates the app names, the writer thread and rotation, the reader the log window tails, the panic hook, and Windows minidumps; no GPUI |
 | `crates/herdr-gpui-launcher` | Windows-only windowed launcher that starts `herdr-gpui.exe` without a console window; std plus `MessageBoxW` for start failures |
@@ -74,10 +75,15 @@ at the same spot, or both bumping one hard-coded count.
   `just check-sorted` (part of `just ci`) enforces the markers and `just sort`
   fixes them. Never mark a list whose order is shown to users or is a wire
   contract, such as menu rows or the vendored bincode types.
-- Give a new feature's failures their own `thiserror` enum in its module and
+- Give a new feature's failures their own `thiserror` enum named `Error` in
+  its module's `error.rs`, with variants not prefixed by the feature name, and
   add one `#[error(transparent)] Feature(#[from] feature::Error)` variant to
-  the crate's root `Error`, as `teleport`, `pane_move`, and `backdrop` do,
-  rather than a run of variants in `error.rs`. The root enum stays sorted.
+  the crate's root `Error`, as `pane_move` and `backdrop` do, rather than a
+  run of variants in `error.rs`. The root enum stays sorted. Callers name it
+  `feature::Error`, never through an `as FeatureError` alias.
+- Wrap another crate's error the same way (`GitHub(#[from] herdr_github::Error)`).
+  Do not mirror its variants in the app's root and convert one by one: each
+  failure has one definition, and callers match the nested variant.
 - Shared state structs (`HerdrWindow`, `Config`, `herdr_settings::Settings`)
   and their constructors keep their fields sorted. Run an initializer that has
   an effect or depends on another (registering a subscription, creating an
@@ -139,7 +145,7 @@ agents in Herdr panes can use what only this client shows or keeps
 - Parse strings at boundaries, then match on domain types. Prefer `From`, `TryFrom`, `Into`, and `TryInto` for conversions.
 - Prefer typed request/result structures when shapes are known. Preserve genuinely open-ended protocol envelopes rather than forcing a speculative schema.
 - Derive standard traits such as `Default`, `PartialEq`, and `Eq` where their semantics are valid. Compare complete values when deduplicating operations.
-- Every crate must expose its own root `Error` and `Result<T>` (`pub use error::{Error, Result}`), with errors defined using `thiserror`. Use meaningful typed variants for internal failures and match on variants, never error text.
+- Every crate must expose its own root `Error` and `Result<T, E = Error>` (`pub use error::{Error, Result}`), with errors defined using `thiserror`. Use meaningful typed variants for internal failures and match on variants, never error text.
 - Use `anyhow::Result` and context at application/reporting and test-harness boundaries, not as a replacement for typed internal errors. Keep dependency versions in workspace dependencies.
 - Never use `String` or `&str` as an error type, including `Result<(), String>`, worker-channel results, and intermediate operation state. Strings are allowed as diagnostic payloads, unchanged wire-protocol fields, and final UI display text, not as catch-all internal error wrappers.
 - Propagate errors with `?`; preserve original causes with `#[from]`/`#[source]` and retain structured operation/path context until the display boundary. Do not flatten sources with `to_string()` or `format!()` during propagation. Keep `io::Result` where an actual I/O trait or connector contract requires it, preserving typed sources when adapting errors.
@@ -163,6 +169,8 @@ agents in Herdr panes can use what only this client shows or keeps
 - Keep glyph visibility separate from decorations: spaces and wide-character continuation cells may still need underline/strikethrough painting.
 - Preserve menu input isolation, focus behavior, Unicode composition, and semantic input routing. Do not synthesize terminal keys for operations with endpoint API methods.
 - Activity indicators come from the daemon's snapshot, not guessed terminal output or a client-local seen ledger. Every client shows the same dot; do not reintroduce per-client acknowledgement without asking.
+- Animate UI that appears, disappears, moves, or changes in response to a click or hover when motion helps the user follow it: tabs, panels, popovers, revealed controls. Animate both ways, so what slides in slides back out, and reverse from where it is when interrupted. Skip it where motion would only delay the result, such as typing, scrolling content, or terminal output.
+- Time animations through `crate::motion`: read `motion::now()` instead of `Instant::now()` for start stamps and progress, pass GPUI `Animation` lengths through `motion::duration`, and prefer `motion::ENTER`/`LEAVE`, `progress`, and `Toggle` over new curves and constants. That keeps motion consistent and lets QA > Slow Animations slow every animation tenfold.
 
 ## Protocol And Safety
 

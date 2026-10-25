@@ -10,13 +10,12 @@
 //! so nothing typed depends on where the app is installed, and the agent's
 //! name comes from the shared table, never from daemon text.
 
-use crate::{HerdrWindow, NavigationTarget, window::Flash};
+use crate::{HerdrWindow, NavigationTarget, browser::GroupId, window::Flash};
 use gpui::{prelude::*, *};
 use herdr_chat_protocol::Agent;
 use herdr_client::Method;
 use serde_json::json;
 use std::{
-    ffi::OsStr,
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
@@ -74,42 +73,12 @@ pub(crate) enum Program {
 /// build` lay it out, else the first on the login shell's `PATH`. Blocking:
 /// run it off the UI thread.
 pub(crate) fn locate() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok();
-    locate_in(exe.as_deref(), crate::login_env::path().as_deref())
+    crate::bundled::locate(PROGRAM)
 }
 
-pub(crate) fn locate_in(exe: Option<&Path>, path: Option<&OsStr>) -> Option<PathBuf> {
-    let beside = exe.into_iter().flat_map(|exe| {
-        // `cargo install` and package managers link the app into a bin
-        // directory; its sibling is beside the real file.
-        let real = std::fs::canonicalize(exe).ok();
-        [
-            exe.parent().map(Path::to_owned),
-            real.and_then(|real| real.parent().map(Path::to_owned)),
-        ]
-    });
-    beside
-        .flatten()
-        .chain(
-            path.into_iter()
-                .flat_map(std::env::split_paths)
-                .filter(|dir| dir.is_absolute()),
-        )
-        .map(|dir| dir.join(PROGRAM))
-        .find(|candidate| runnable(candidate))
-}
-
-fn runnable(path: &Path) -> bool {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return false;
-    };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-    }
-    #[cfg(not(unix))]
-    metadata.is_file()
+#[cfg(test)]
+pub(crate) fn locate_in(exe: Option<&Path>, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    crate::bundled::locate_in(PROGRAM, exe, path)
 }
 
 /// The line typed into the new tab's shell. On Unix `sh` runs it, so it
@@ -273,6 +242,7 @@ impl HerdrWindow {
                 ),
             )
             .map_err(|_| Error::NotConnected)?;
+        self.chats.last_started = Some(agent);
         self.chats.starting = Some(Starting {
             agent,
             remote: program.is_none(),
@@ -288,12 +258,26 @@ impl HerdrWindow {
     /// [`Self::start_chat`], reporting a failure as a flash.
     pub(crate) fn start_chat_or_flash(&mut self, agent: Agent, cx: &mut Context<Self>) {
         if let Err(error) = self.start_chat(agent, None) {
-            self.show_flash(
-                Flash::warning(format!("The chat did not start: {error}")),
-                cx,
-            );
+            self.flash_chat_error(&error, cx);
         }
         cx.notify();
+    }
+
+    /// Starts a chat from a tab strip's launcher, so its tab opens in that
+    /// strip's group as one from the strip's "+" does.
+    pub(crate) fn start_chat_in(&mut self, agent: Agent, group: GroupId, cx: &mut Context<Self>) {
+        match self.start_chat(agent, None) {
+            Ok(()) => self.expect_new_tab_in(group),
+            Err(error) => self.flash_chat_error(&error, cx),
+        }
+        cx.notify();
+    }
+
+    fn flash_chat_error(&mut self, error: &Error, cx: &mut Context<Self>) {
+        self.show_flash(
+            Flash::warning(format!("The chat did not start: {error}")),
+            cx,
+        );
     }
 
     /// Runs every tick: once the tab exists, types the line that starts the
@@ -341,7 +325,7 @@ impl HerdrWindow {
             .map_err(|error| super::Error::from(Error::Request(error)).into())
             .and_then(|response| {
                 crate::worktree_scripts::created_tab(&response).map_err(|error| match error {
-                    crate::Error::WorktreeScriptsResponse => {
+                    crate::Error::WorktreeScripts(crate::worktree_scripts::Error::Response) => {
                         super::Error::from(Error::Response).into()
                     }
                     error => error,

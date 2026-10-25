@@ -95,7 +95,7 @@ fn arguments_herdr_would_refuse_fail_the_load_and_name_the_key() {
         (&*format!("args = [\"{}\"]", "x".repeat(1025)), "args"),
     ] {
         match Config::parse(&format!("[orchestrator.agents.opencode]\n{table}")) {
-            Err(Error::OrchestratorConfig(error)) => {
+            Err(crate::Error::OrchestratorConfig(error)) => {
                 let message = error.to_string();
                 assert!(
                     message.starts_with(&format!("orchestrator.agents.opencode.{key} ")),
