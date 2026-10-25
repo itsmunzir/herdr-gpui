@@ -22,7 +22,7 @@ enum Field {
 }
 
 impl Field {
-    const ALL: [Self; 3] = [Self::Search, Self::Name, Self::Branch];
+    const ALL: &[Self] = &[Self::Search, Self::Name, Self::Branch];
 }
 
 impl HerdrWindow {
@@ -45,7 +45,6 @@ impl HerdrWindow {
             .role(Role::TabList)
             .aria_label("Worktree source")
             .flex()
-            .items_center()
             .gap(px(4.))
             .px(px(16.))
             .pt(px(10.));
@@ -120,17 +119,6 @@ impl HerdrWindow {
                     }),
             );
         }
-        // The strip's own key, quiet at its end, as the palette's footer
-        // names its filter key.
-        strip = strip.child(
-            div()
-                .debug_selector(|| "worktree-tabs-hint".into())
-                .ml_auto()
-                .flex_none()
-                .pl(px(8.))
-                .text_color(rgb(theme.muted))
-                .child("⌃Tab"),
-        );
         div()
             .flex_none()
             .child(

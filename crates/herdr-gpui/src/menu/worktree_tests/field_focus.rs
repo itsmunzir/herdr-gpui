@@ -68,17 +68,14 @@ fn tab_moves_between_the_forms_fields(cx: &mut gpui::TestAppContext) {
 }
 
 /// Ctrl-Tab and Ctrl-Shift-Tab step through the strip from any field, as they
-/// step through the palette's filters and the add device rail, and the strip
-/// names its key.
+/// step through the palette's filters and the add device rail.
 #[gpui::test]
 fn ctrl_tab_steps_through_the_tabs(cx: &mut gpui::TestAppContext) {
     let (view, cx) = cx.add_window_view(sidebar::layout_tests::fixture_window);
     cx.simulate_resize(gpui::size(gpui::px(900.), gpui::px(700.)));
     open_dialog(&view, cx, false, Tab::New);
-    let strip = cx.debug_bounds("worktree-tabs").unwrap();
-    let hint = cx.debug_bounds("worktree-tabs-hint").unwrap();
-    let last = cx.debug_bounds("worktree-tab-issues").unwrap();
-    assert!(last.right() < hint.left() && hint.right() <= strip.right());
+    // The tabs can be clicked, so the strip does not caption its key.
+    assert!(cx.debug_bounds("worktree-tabs-hint").is_none());
 
     click_name(cx);
     cx.simulate_keystrokes("ctrl-tab");

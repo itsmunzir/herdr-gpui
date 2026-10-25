@@ -1,7 +1,17 @@
 #![allow(clippy::unwrap_used)]
 
-use super::{format_edit, format_typed};
+use super::{SETTLED, format_typed};
 use crate::worktree::{branch_for_name, git_accepts, validate_branch};
+
+/// The edit replacing what lies between `before` and `after`, as the text
+/// inserted and the whole text that then follows it.
+fn format_edit(before: &str, inserted: &str, after: &str) -> (String, String) {
+    let edit = super::format_edit(before, inserted, after);
+    (
+        edit.inserted,
+        format!("{}{}", edit.after, &after[edit.replaced..]),
+    )
+}
 
 /// `keys` typed one at a time at the end of an empty field.
 fn typed(keys: &str) -> String {
@@ -211,4 +221,21 @@ fn a_name_proposes_a_branch_git_accepts() {
         assert_eq!(branch_for_name(name).as_deref(), Some(branch), "{name:?}");
         assert!(git_accepts(branch), "{branch}");
     }
+}
+
+/// A deletion's join stops rewriting once the text after it reads as it
+/// did: after a few unchanged characters, or an unchanged slash.
+#[test]
+fn a_deletion_rewrites_only_as_far_as_its_join_reaches() {
+    let tail = "x".repeat(SETTLED + 2) + "--y";
+    let edit = super::format_edit("a.", "", &format!(".{tail}"));
+    assert_eq!(edit.after, "x".repeat(SETTLED));
+    assert_eq!(edit.replaced, SETTLED + 1);
+
+    let edit = super::format_edit("feat/", "", "/b/--c");
+    assert_eq!((edit.after.as_str(), edit.replaced), ("b/", 3));
+
+    let edit = super::format_edit("a", "b", "cdefgh");
+    assert_eq!((edit.inserted.as_str(), edit.replaced), ("b", SETTLED));
+    assert_eq!(edit.after, "cdefg");
 }

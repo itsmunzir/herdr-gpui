@@ -4,10 +4,10 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::{HerdrWindow, input::ViewInputHandler, words};
 
-/// Rewrites an edit, given the text left and right of the range it replaces:
-/// what to insert there, and what then follows it, which a deletion can
-/// change.
-type Format = fn(&str, &str, &str) -> (String, String);
+/// Rewrites an edit, given the text left of the range it replaces, the text
+/// typed, and the text right of the range: what to insert there, and how the
+/// start of the text after it changes, which a deletion can.
+type Format = fn(&str, &str, &str) -> crate::worktree::Edit;
 
 // Byte offsets internally; only the platform input boundary uses UTF-16.
 #[derive(Default)]
@@ -72,32 +72,28 @@ impl DialogInput {
             let text: String = text.chars().take(4096).collect();
             format(&self.text[..range.start], &text, &self.text[range.end..])
         });
-        // Text that is all left out changes nothing, so a stray key does not
-        // also delete the selection it was typed over; a composition being
-        // committed is still removed.
-        if formatted
-            .as_ref()
-            .is_some_and(|(inserted, _)| inserted.is_empty())
-            && !text.is_empty()
-            && self.marked.is_none()
-        {
-            return;
-        }
-        // A formatted edit rewrites through the end, since what follows the
-        // range can give way to what now comes before it.
-        let (text, range, after) = match &formatted {
-            Some((inserted, after)) => (
-                inserted.as_str(),
-                range.start..self.text.len(),
-                after.as_str(),
+        let (text, range, after) = match formatted {
+            // Text that is all left out changes nothing, so a stray key does
+            // not also delete the selection it was typed over; a composition
+            // being committed is still removed.
+            Some(edit) if edit.inserted.is_empty() && !text.is_empty() && self.marked.is_none() => {
+                return;
+            }
+            // What follows the range can give way to what now comes before it.
+            // The formatter has already left out control characters.
+            Some(edit) => {
+                let end = range.end + edit.replaced;
+                (edit.inserted, range.start..end, edit.after)
+            }
+            None => (
+                text.chars()
+                    .filter(|c| !c.is_control())
+                    .take(4096)
+                    .collect(),
+                range,
+                String::new(),
             ),
-            None => (text, range, ""),
         };
-        let text: String = text
-            .chars()
-            .filter(|c| !c.is_control())
-            .take(4096)
-            .collect();
         if self.text.len() - range.len() + text.len() + after.len() > 16384 {
             return;
         }
@@ -113,6 +109,22 @@ impl DialogInput {
         self.reversed = false;
         self.marked = (marked && !text.is_empty()).then_some(range.start..end);
         self.line = None;
+    }
+
+    /// Ends a composition where it stands, as when the platform unmarks the
+    /// text rather than committing it. A formatted field commits the text as
+    /// if it had been typed, so it is kept out like any other edit.
+    pub fn unmark(&mut self) {
+        let Some(range) = self.marked.clone() else {
+            return;
+        };
+        if self.format.is_none() {
+            self.marked = None;
+            return;
+        }
+        let text = self.text[range].to_owned();
+        self.replace(None, &text, false, None);
+        self.marked = None;
     }
 
     fn cursor(&self) -> usize {
@@ -400,6 +412,7 @@ mod tests {
     use super::DialogInput;
     use gpui::Keystroke;
 
+    mod branch_format;
     mod word_keys;
 
     #[test]
@@ -422,21 +435,6 @@ mod tests {
             input.range_from_utf16(999..1000),
             input.text.len()..input.text.len()
         );
-    }
-
-    /// A composition committed as text the branch field leaves out is
-    /// removed, and the text either side of it joins as after a deletion.
-    #[test]
-    fn a_composition_committed_to_nothing_joins_like_a_deletion() {
-        let mut input = DialogInput::branch("a.x.b".into());
-        input.selection = 2..3;
-        input.replace(None, "\u{3002}", true, Some(1..1));
-        assert_eq!(input.text, "a.\u{3002}.b");
-        input.replace(None, ".", false, None);
-        assert_eq!(input.text, "a.b");
-        assert_eq!(input.selection, 2..2);
-        assert!(input.marked.is_none());
-        assert!(crate::worktree::git_accepts(&input.text));
     }
 
     #[gpui::test]
