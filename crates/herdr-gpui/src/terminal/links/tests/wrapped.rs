@@ -125,19 +125,65 @@ fn lines_that_end_short_of_the_right_edge_are_never_joined() {
 
 #[test]
 fn a_link_ending_at_the_right_edge_keeps_to_its_row() {
-    // The next line starts with a blank, so nothing continues the path; it
-    // may still go on past the edge, clipped as `less -S` clips a line, so
-    // it is not read, as before.
-    let ended = lines(&["error in src/lib.rs", "  help: src/a.rs"], 19);
+    // The next line is empty, so nothing continues the path; it may still go
+    // on past the edge, clipped as `less -S` clips a line, so it is not read,
+    // as before.
+    let ended = lines(&["error in src/lib.rs", "", "  help: src/a.rs"], 19);
     assert!(read(&ended, 12, 0).is_none());
-    let below = read(&ended, 10, 1).unwrap();
+    let below = read(&ended, 10, 2).unwrap();
     assert_eq!(below.target, bare("src/a.rs", None));
-    assert_eq!(below.rows().collect::<Vec<_>>(), vec![(1, 8..16)]);
+    assert_eq!(below.rows().collect::<Vec<_>>(), vec![(2, 8..16)]);
     // A web address filling its row, then a line that starts with text,
     // looks like one wrapped address: neither row reads one.
     let url = lines(&["https://example.com/x", "Done"], 21);
     assert!(read(&url, 3, 0).is_none());
     assert!(read(&url, 1, 1).is_none());
+}
+
+#[test]
+fn a_path_an_agent_wrapped_under_a_hanging_indent_reads_whole() {
+    // An agent's markdown list, wrapped by the agent itself: the path breaks
+    // at the right edge and goes on under the item's text, after an indent.
+    let item = "  - round 1: /Users/dominik/Projects/out/shots-before/tile";
+    let width = item.chars().count() as u16;
+    let listed = lines(
+        &[item, "    77-street2-round1.png", "  - round 2: done"],
+        width,
+    );
+    let link = read_everywhere(&listed, &[(13, 0), (width - 1, 0), (4, 1), (23, 1)]).unwrap();
+    assert_eq!(
+        link.target,
+        bare(
+            "/Users/dominik/Projects/out/shots-before/tile77-street2-round1.png",
+            None
+        )
+    );
+    // The indent is no part of it.
+    assert_eq!(
+        link.rows().collect::<Vec<_>>(),
+        vec![(0, 13..width), (1, 4..25)]
+    );
+    // Nor does the next item continue it.
+    assert!(read(&listed, 1, 1).is_none());
+    assert_ne!(
+        read(&listed, 14, 2).map(|link| link.target),
+        Some(link.target)
+    );
+}
+
+#[test]
+fn an_indented_line_goes_on_only_from_a_path() {
+    // Prose that happens to fill its row: the indented path below it is a
+    // line of its own, read alone as before.
+    let prose = lines(&["the build is green", "    src/main.rs ok"], 18);
+    let link = read(&prose, 6, 1).unwrap();
+    assert_eq!(link.target, bare("src/main.rs", None));
+    assert_eq!(link.rows().collect::<Vec<_>>(), vec![(1, 4..15)]);
+    // A web address that seems to go on after an indent is still not
+    // guessed.
+    let web = lines(&["see https://example.com/a", "    /b now"], 25);
+    assert!(read(&web, 5, 0).is_none());
+    assert!(read(&web, 4, 1).is_none());
 }
 
 #[test]

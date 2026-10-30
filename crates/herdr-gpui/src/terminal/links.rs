@@ -351,10 +351,11 @@ fn frame_link(
         });
     }
     // Most rows end their line before the right edge and are read alone.
-    // Text under the point that runs into an edge a neighbouring row may
-    // continue across is read with the rows it may span instead, as one line.
+    // Text under the point that starts its row, or runs into the right edge,
+    // where a neighbouring row may continue it, is read with the rows it may
+    // span instead, as one line.
     let mut first = row;
-    if wrap::filled_to(cells, source) {
+    if wrap::first_text(cells, source) {
         while first > rows.start
             && row - first + 1 < wrap::MAX_WRAPPED_ROWS
             && wrap::continues(frame, &columns, first - 1)
@@ -363,7 +364,7 @@ fn frame_link(
         }
     }
     let mut last = row;
-    if wrap::filled_from(cells, source) {
+    if wrap::runs_to_end(cells, source) {
         while last + 1 < rows.end
             && last - first + 1 < wrap::MAX_WRAPPED_ROWS
             && wrap::continues(frame, &columns, last)
@@ -381,10 +382,10 @@ fn frame_link(
     }
     let segments = run.segments(found.range());
     let target = found.target(&run.text)?;
-    // The surface does not tell a row the terminal wrapped from a line that
-    // happened to fill it, so text read across rows is a link only where the
-    // disk confirms it: a file, which is one only once it is found. A web
-    // address across rows is the daemon's to read (`pane.link.resolve`),
+    // The surface does not tell a wrapped row from a line that happened to
+    // fill it, so text read across rows is a link only where the disk
+    // confirms it: a file, which is one only once it is found. A web address
+    // the terminal wrapped is the daemon's to read (`pane.link.resolve`),
     // from the terminal's own wrap flags.
     if segments.len() > 1 && !matches!(target, RowTarget::Path { .. }) {
         return None;
