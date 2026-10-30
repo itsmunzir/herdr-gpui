@@ -2620,8 +2620,12 @@ its dashes turn solid once its target is verified:
 
 A plain URL is read from its row. One that reaches the pane's right edge may
 wrap onto the next row; a daemon that offers `pane.link.resolve` reads it
-whole, and otherwise it needs explicit terminal hyperlink metadata. Paths are
-not links in panes on SSH hosts, whose files live on that host.
+whole, and otherwise it needs explicit terminal hyperlink metadata. A file
+path or `file://` address that fills a row to the right edge and goes on at
+the start of the next is read across those rows, up to 16 of them: once the
+whole path is found on disk, every row of it is underlined, and a click on any
+of them opens it. Paths are not links in panes on SSH hosts, whose files live
+on that host.
 
 A file opens in your terminal editor at the printed line, in a new pane split
 to the right of the pane that printed it (see [Code Navigation](#code-navigation)).
