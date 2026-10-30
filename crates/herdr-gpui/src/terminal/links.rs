@@ -324,8 +324,8 @@ fn frame_link(
     let (cells, selected, source) = link_cell(frame, column, row, columns.start, columns.end)?;
     let cell = &cells[source];
     // Cell indexes fit the row, whose width is a `u16`.
-    let span =
-        |cells: Range<usize>| columns.start + cells.start as u16..columns.start + cells.end as u16;
+    let left = columns.start;
+    let span = |cells: Range<usize>| left + cells.start as u16..left + cells.end as u16;
     // An explicit link is authoritative, even if its destination is disallowed.
     if let Some(index) = cells[selected].hyperlink.or(cell.hyperlink) {
         let destination = frame.hyperlinks.get(index as usize)?;
@@ -350,34 +350,17 @@ fn frame_link(
             continued: Vec::new(),
         });
     }
-    // Most rows end their line before the right edge and are read alone.
-    // Text under the point that starts its row, or runs into the right edge,
-    // where a neighbouring row may continue it, is read with the rows it may
-    // span instead, as one line.
-    let mut first = row;
-    if wrap::first_text(cells, source) {
-        while first > rows.start
-            && row - first + 1 < wrap::MAX_WRAPPED_ROWS
-            && wrap::continues(frame, &columns, first - 1)
-        {
-            first -= 1;
-        }
-    }
-    let mut last = row;
-    if wrap::runs_to_end(cells, source) {
-        while last + 1 < rows.end
-            && last - first + 1 < wrap::MAX_WRAPPED_ROWS
-            && wrap::continues(frame, &columns, last)
-        {
-            last += 1;
-        }
-    }
-    let run = wrap::Run::read(frame, &columns, first..=last)?;
+    // Most rows end their line before the right edge and are read alone;
+    // text under the point that a neighbouring row may continue is read with
+    // the rows it may span, as one line.
+    let area = wrap::Area::new(frame, columns, rows);
+    let lines = area.around(row, source);
+    let first = *lines.start();
+    let run = area.read(lines)?;
     let found = Plain::read(&run.text, run.start_of(row, source)?)?;
     // Text past either end of what was read may go on with the link, off
     // screen or beyond the rows read: a destination is never guessed.
-    let cut_above = || first > rows.start && wrap::continues(frame, &columns, first - 1);
-    if found.open() || (found.range().start == 0 && cut_above()) {
+    if found.open() || (found.range().start == 0 && area.continued_above(first)) {
         return None;
     }
     let segments = run.segments(found.range());

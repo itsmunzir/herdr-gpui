@@ -187,6 +187,85 @@ fn an_indented_line_goes_on_only_from_a_path() {
 }
 
 #[test]
+fn a_long_name_an_agent_wrapped_over_several_rows_reads_whole() {
+    // Only the first row names a folder; the rows below hold the rest of one
+    // file name, so the separator that lets an indented row go on is rows
+    // above the second break.
+    let listed = lines(
+        &["see /tmp/abcdefg", "    hijklmnopqrs", "    tuvw.txt ok"],
+        16,
+    );
+    let link = read_everywhere(
+        &listed,
+        &[(4, 0), (15, 0), (4, 1), (15, 1), (4, 2), (11, 2)],
+    )
+    .unwrap();
+    assert_eq!(link.target, bare("/tmp/abcdefghijklmnopqrstuvw.txt", None));
+    assert_eq!(
+        link.rows().collect::<Vec<_>>(),
+        vec![(0, 4..16), (1, 4..16), (2, 4..12)]
+    );
+    // The same name with its middle row wrapped by the terminal.
+    let mixed = lines(
+        &["see /tmp/abcdefg", "hijklmnopqrstuvw", "    x.txt ok"],
+        16,
+    );
+    let link = read_everywhere(&mixed, &[(5, 0), (8, 1), (5, 2)]).unwrap();
+    assert_eq!(link.target, bare("/tmp/abcdefghijklmnopqrstuvwx.txt", None));
+    assert_eq!(
+        link.rows().collect::<Vec<_>>(),
+        vec![(0, 4..16), (1, 0..16), (2, 4..9)]
+    );
+    // Prose filling its rows still leaves the indented path below it alone,
+    // however many rows its last word spans.
+    let prose = lines(
+        &["the build is all", "    greenfieldsx", "    src/main.rs"],
+        16,
+    );
+    let link = read(&prose, 6, 2).unwrap();
+    assert_eq!(link.target, bare("src/main.rs", None));
+    assert_eq!(link.rows().collect::<Vec<_>>(), vec![(2, 4..15)]);
+}
+
+#[test]
+fn an_escaped_space_stays_part_of_a_wrapped_path() {
+    let text = r"see /tmp/a\ b/verylongname.txt ok";
+    let path = bare("/tmp/a b/verylongname.txt", None);
+    // Wrapped after `b/ve`: the escaped space does not stop the part before
+    // it from reading down, so every part names the same file.
+    let after_name = frame(text, 16, 3);
+    let link = read_everywhere(
+        &after_name,
+        &[(4, 0), (9, 0), (11, 0), (12, 0), (0, 1), (13, 1)],
+    )
+    .unwrap();
+    assert_eq!(link.target, path);
+    assert_eq!(
+        link.rows().collect::<Vec<_>>(),
+        vec![(0, 4..16), (1, 0..14)]
+    );
+    // Wrapped right after the backslash: the space starting the next row is
+    // the escaped one, not an indent, and stays in the name.
+    let after_backslash = frame(text, 11, 4);
+    let link =
+        read_everywhere(&after_backslash, &[(4, 0), (10, 0), (0, 1), (1, 1), (3, 2)]).unwrap();
+    assert_eq!(link.target, path);
+    assert_eq!(
+        link.rows().collect::<Vec<_>>(),
+        vec![(0, 4..11), (1, 0..11), (2, 0..8)]
+    );
+    // A drive's backslash escapes nothing, so the blanks below one ending a
+    // row are an indent, which an agent's wrapped path goes on after.
+    let drive = lines(&[r"open C:\dir\sub\", "    file.txt ok"], 16);
+    let link = read_everywhere(&drive, &[(5, 0), (15, 0), (6, 1)]).unwrap();
+    assert_eq!(link.target, bare(r"C:\dir\sub\file.txt", None));
+    assert_eq!(
+        link.rows().collect::<Vec<_>>(),
+        vec![(0, 5..16), (1, 4..12)]
+    );
+}
+
+#[test]
 fn wide_characters_in_a_wrapped_path_keep_their_columns() {
     let cell = |symbol: &str| CellData {
         symbol: symbol.into(),
