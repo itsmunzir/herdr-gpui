@@ -155,11 +155,11 @@ impl<'a> Area<'a> {
             .get(offset + usize::from(self.columns.start)..offset + usize::from(self.columns.end))
     }
 
-    /// The reading row `row` goes on from: that at the end of the row above,
-    /// when that row fills to the right edge, followed down from the first of
-    /// the filled rows above it, at most `MAX_WRAPPED_ROWS` up; `None` when
-    /// `row` starts afresh.
-    fn reading_into(&self, row: u16) -> Option<Reading> {
+    /// How row `row` reads, followed down from the first of the rows above
+    /// it that fill to the right edge, at most `MAX_WRAPPED_ROWS` up. A row
+    /// carries its reading into the next only where the two join, so a row
+    /// under one it does not go on from is read afresh.
+    fn line(&self, row: u16) -> Option<Line> {
         let filled = |row: u16| {
             self.cells(row)
                 .and_then(<[CellData]>::last)
@@ -169,13 +169,27 @@ impl<'a> Area<'a> {
         while row - first < MAX_WRAPPED_ROWS && first.checked_sub(1).is_some_and(&filled) {
             first -= 1;
         }
-        (first..row).try_fold(None, |reading, row| {
-            Some(Some(Words::of(self.cells(row)?, reading).end))
-        })?
+        let top = self.cells(first)?;
+        let mut line = Line::new(top, Words::of(top, None), None);
+        for below in first + 1..=row {
+            let cells = self.cells(below)?;
+            let carried = Words::of(cells, Some(line.words.end));
+            // Text only wraps once it fills a row to the right edge, which
+            // every row above `row` here does. A terminal goes on at the
+            // next row's first column; a program that wraps its own output
+            // may indent the rest, as an agent does under a list item, and
+            // that is taken to go on only from a path.
+            line = if !carried.empty() && (carried.indent() == 0 || line.path) {
+                Line::new(cells, carried, Some(line.path))
+            } else {
+                Line::new(cells, Words::of(cells, None), None)
+            };
+        }
+        Some(line)
     }
 
     fn words(&self, row: u16) -> Option<Words> {
-        Some(Words::of(self.cells(row)?, self.reading_into(row)))
+        Some(self.line(row)?.words)
     }
 
     /// The rows the text at cell `index` of `row` may span, read as one
@@ -214,50 +228,12 @@ impl<'a> Area<'a> {
         first > self.rows.start && self.continues(first - 1)
     }
 
-    /// Whether the text of row `above` may go on in the row below it. Text
-    /// only wraps once it fills a row to the right edge. A terminal goes on
-    /// at the next row's first column; a program that wraps its own output
-    /// may indent the rest, as an agent does under a list item, and that is
-    /// taken to go on only from a path.
+    /// Whether the text of row `above` may go on in the row below it.
     fn continues(&self, above: u16) -> bool {
-        let Some(below) = above.checked_add(1) else {
-            return false;
-        };
-        let (Some(upper), Some(lower)) = (self.cells(above), self.words(below)) else {
-            return false;
-        };
-        if upper.last().is_none_or(blank) || lower.empty() {
-            return false;
-        }
-        lower.indent() == 0 || self.ends_in_path(above)
-    }
-
-    /// Whether the word ending row `row` holds a path separator, there or on
-    /// the rows above that it goes on from, as a long file name broken over
-    /// several rows only names its folders on the first.
-    fn ends_in_path(&self, mut row: u16) -> bool {
-        for _ in 0..MAX_WRAPPED_ROWS {
-            let (Some(cells), Some(words)) = (self.cells(row), self.words(row)) else {
-                return false;
-            };
-            let start = words.last_word();
-            let word = cells.get(start..).unwrap_or_default();
-            if word.iter().any(|cell| shown(cell).contains(['/', '\\'])) {
-                return true;
-            }
-            // The word goes on from the row above only as this row's first
-            // text, under a row filled to the right edge.
-            let filled_above = row
-                .checked_sub(1)
-                .and_then(|above| self.cells(above))
-                .and_then(<[CellData]>::last)
-                .is_some_and(|cell| !blank(cell));
-            if start != words.indent() || !filled_above {
-                return false;
-            }
-            row -= 1;
-        }
-        false
+        above
+            .checked_add(1)
+            .and_then(|below| self.line(below))
+            .is_some_and(|line| line.joined)
     }
 
     /// The text of `rows`, bounded like a single row's; `None` past that
@@ -299,6 +275,37 @@ impl<'a> Area<'a> {
             starts,
             text,
         })
+    }
+}
+
+/// One row as read on from the rows above it.
+struct Line {
+    words: Words,
+    /// Whether the row goes on from the row above.
+    joined: bool,
+    /// Whether the word ending the row holds a path separator, there or on
+    /// the rows above that it goes on from, as a long file name broken over
+    /// several rows only names its folders on the first.
+    path: bool,
+}
+
+impl Line {
+    /// Row `cells` read as `words`, going on from a row above whose word
+    /// ending it held a path separator or not, or `None` when read afresh.
+    fn new(cells: &[CellData], words: Words, above: Option<bool>) -> Self {
+        let start = words.last_word();
+        let own = cells
+            .get(start..)
+            .unwrap_or_default()
+            .iter()
+            .any(|cell| shown(cell).contains(['/', '\\']));
+        // The word goes on from the row above only as this row's first text.
+        let carried = above.is_some_and(|path| path && start == words.indent());
+        Self {
+            joined: above.is_some(),
+            path: own || carried,
+            words,
+        }
     }
 }
 

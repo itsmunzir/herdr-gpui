@@ -284,6 +284,23 @@ fn a_drive_path_an_agent_wrapped_over_three_rows_reads_whole() {
 }
 
 #[test]
+fn a_drive_path_under_a_full_prose_row_reads_whole() {
+    // The prose does not go on into the indented path, so the path's row is
+    // read afresh and its drive keeps the backslash ending it from escaping
+    // the indent below.
+    let frame = lines(
+        &["all tests passed", r"    C:\dir\more\", "    file.txt ok"],
+        16,
+    );
+    let link = read_everywhere(&frame, &[(4, 1), (15, 1), (4, 2), (11, 2)]).unwrap();
+    assert_eq!(link.target, bare(r"C:\dir\more\file.txt", None));
+    assert_eq!(
+        link.rows().collect::<Vec<_>>(),
+        vec![(1, 4..16), (2, 4..12)]
+    );
+}
+
+#[test]
 fn wide_characters_in_a_wrapped_path_keep_their_columns() {
     let cell = |symbol: &str| CellData {
         symbol: symbol.into(),
