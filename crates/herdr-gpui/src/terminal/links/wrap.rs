@@ -56,9 +56,12 @@ struct Words {
 
 impl Words {
     /// The words of `cells`, read as `plain_path` reads them: on from the
-    /// row above's reading, or afresh, as from the start of a text.
+    /// row above's reading, or afresh, as from the start of a text. A row
+    /// read on from another drops its indent from the line, so the indent
+    /// leaves the carried word, and whether it started with a drive, as it is.
     fn of(cells: &[CellData], from: Option<Reading>) -> Self {
         let mut breaks = Vec::with_capacity(cells.len());
+        let mut indent = from.is_some_and(|reading| !reading.escape);
         let Reading {
             mut escape,
             mut drive,
@@ -67,6 +70,11 @@ impl Words {
             drive: starts_drive(cells),
         });
         for (index, cell) in cells.iter().enumerate() {
+            if indent && blank(cell) {
+                breaks.push(true);
+                continue;
+            }
+            indent = false;
             if cell.skip || std::mem::take(&mut escape) {
                 breaks.push(false);
                 continue;
@@ -147,12 +155,23 @@ impl<'a> Area<'a> {
             .get(offset + usize::from(self.columns.start)..offset + usize::from(self.columns.end))
     }
 
-    /// The reading row `row` goes on from: that of a row above whose word
-    /// runs into the right edge, read from that row's own start; `None` when
-    /// `row` starts afresh. `read` follows the reading through every row.
+    /// The reading row `row` goes on from: that at the end of the row above,
+    /// when that row fills to the right edge, followed down from the first of
+    /// the filled rows above it, at most `MAX_WRAPPED_ROWS` up; `None` when
+    /// `row` starts afresh.
     fn reading_into(&self, row: u16) -> Option<Reading> {
-        let above = self.cells(row.checked_sub(1)?)?;
-        (!above.last().is_none_or(blank)).then(|| Words::of(above, None).end)
+        let filled = |row: u16| {
+            self.cells(row)
+                .and_then(<[CellData]>::last)
+                .is_some_and(|cell| !blank(cell))
+        };
+        let mut first = row;
+        while row - first < MAX_WRAPPED_ROWS && first.checked_sub(1).is_some_and(&filled) {
+            first -= 1;
+        }
+        (first..row).try_fold(None, |reading, row| {
+            Some(Some(Words::of(self.cells(row)?, reading).end))
+        })?
     }
 
     fn words(&self, row: u16) -> Option<Words> {
